@@ -412,6 +412,10 @@
   transform: none;
 }
 
+.auth-mobile-only {
+  display: none;
+}
+
 .auth-btn--demo {
   background: transparent !important;
   color: #6b7280 !important;
@@ -626,6 +630,10 @@
 
   .auth-left__steps {
     display: none;
+  }
+
+  .auth-mobile-only {
+    display: block;
   }
 
   .auth-right {

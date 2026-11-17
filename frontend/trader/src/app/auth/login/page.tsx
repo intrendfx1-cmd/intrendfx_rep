@@ -360,6 +360,13 @@ export default function LoginPage() {
                       Don&apos;t have an account?{' '}
                       <a onClick={() => handleStepClick(3)}>Sign Up</a>
                     </motion.p>
+
+                    {/* Mobile only: the left-panel steps (incl. Demo) are hidden ≤768px */}
+                    <motion.div {...fadeUp(0.7)} className="auth-mobile-only">
+                      <button type="button" className="auth-btn auth-btn--outline" onClick={handleDemo} disabled={demoLoading || isLoading || maintenance}>
+                        {demoLoading ? <Loader2 size={18} className="auth-spinner" /> : 'Try with Demo'}
+                      </button>
+                    </motion.div>
                   </form>
                 )}
 
