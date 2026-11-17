@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="inTrendFX">
+  <defs>
+    <linearGradient id="if-mark-sq" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#0158c6"/>
+      <stop offset="45%" stop-color="#0199c6"/>
+      <stop offset="70%" stop-color="#4dbe51"/>
+      <stop offset="100%" stop-color="#81ce65"/>
+    </linearGradient>
+  </defs>
+  <path d="M22 8 L33 8 L23 56 L12 56 Z" fill="url(#if-mark-sq)"/>
+  <path d="M36 8 L57 8 L55 16 L42 16 L40.5 22 L52 22 L50 29 L38.5 29 L34 56 L24 56 Z" fill="url(#if-mark-sq)"/>
+</svg>

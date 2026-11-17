@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="inTrendFX">
+  <defs>
+    <linearGradient id="if-app" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#0158c6"/>
+      <stop offset="45%" stop-color="#0199c6"/>
+      <stop offset="70%" stop-color="#4dbe51"/>
+      <stop offset="100%" stop-color="#81ce65"/>
+    </linearGradient>
+    <filter id="if-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="#ffffff" filter="url(#if-shadow)"/>
+  <g transform="translate(28 28)">
+    <path d="M22 0 L33 0 L23 72 L12 72 Z" fill="url(#if-app)"/>
+    <path d="M36 0 L57 0 L55 10 L42 10 L40.5 20 L52 20 L50 30 L38.5 30 L34 72 L24 72 Z" fill="url(#if-app)"/>
+  </g>
+</svg>
