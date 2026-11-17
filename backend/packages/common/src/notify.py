@@ -114,8 +114,9 @@ async def send_email(
             port=settings.SMTP_PORT,
             username=settings.SMTP_USER or None,
             password=settings.SMTP_PASSWORD or None,
-            use_tls=settings.SMTP_USE_TLS,
-            start_tls=not settings.SMTP_USE_TLS,
+            # SMTP_USE_TLS = STARTTLS (port 587), same as smtp_mail.py
+            use_tls=False,
+            start_tls=settings.SMTP_USE_TLS,
         )
         logger.info("Email sent to %s: %s", to, subject)
         return True
