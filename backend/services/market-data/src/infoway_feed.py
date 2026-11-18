@@ -1,4 +1,4 @@
-"""Real-time bid/ask from Infoway.io WebSocket (depth). No simulation."""
+"""PRIMARY feed: real-time bid/ask from official Infoway.io WebSocket (depth). No simulation."""
 
 from __future__ import annotations
 
@@ -7,11 +7,20 @@ import contextlib
 import json
 import logging
 import secrets
+import time
 import urllib.parse
-from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import websockets
+
+from .infoway_config import (
+    BACKOFF_MAX_SEC,
+    BACKOFF_START_SEC,
+    WATCHDOG_SILENCE_SEC,
+    forex_market_open,
+    ms_to_iso,
+    valid_quote,
+)
 
 logger = logging.getLogger("market-data.infoway")
 
@@ -55,6 +64,8 @@ def _trace() -> str:
 class InfowayFeed:
     """Streams depth (best bid/ask) from Infoway `common` + `crypto` sockets."""
 
+    name = "infoway"
+
     def __init__(self, api_key: str, instruments: Dict[str, dict]):
         self._api_key = api_key.strip()
         self._instruments = instruments
@@ -63,6 +74,7 @@ class InfowayFeed:
         self._tick_queue: asyncio.Queue = asyncio.Queue(maxsize=50_000)
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        self._last_tick_mono: Dict[str, float] = {}
 
     @property
     def current_prices(self) -> Dict[str, float]:
@@ -126,6 +138,9 @@ class InfowayFeed:
         q = urllib.parse.urlencode({"business": business, "apikey": self._api_key})
         return f"{INFOWAY_WS_BASE}?{q}"
 
+    def _redact(self, text: object) -> str:
+        return str(text).replace(self._api_key, "***") if self._api_key else str(text)
+
     def _enqueue(self, tick: dict) -> None:
         try:
             self._tick_queue.put_nowait(tick)
@@ -142,46 +157,25 @@ class InfowayFeed:
         key = raw.strip().upper()
         return self._infoway_to_platform.get(key)
 
-    def _emit_depth(self, data: dict) -> None:
+    def _emit_depth(self, data: dict) -> bool:
         raw_sym = data.get("s") or ""
         symbol = self._platform_symbol(str(raw_sym))
         if not symbol or symbol not in self._instruments:
-            return
+            return False
 
         b = data.get("b") or []
         a = data.get("a") or []
         try:
-            bid_prices = b[0] if b else []
-            ask_prices = a[0] if a else []
-            if not bid_prices or not ask_prices:
-                return
-            bid = float(bid_prices[0])
-            ask = float(ask_prices[0])
-        except (TypeError, ValueError, IndexError):
-            return
+            bid = b[0][0]
+            ask = a[0][0]
+        except (TypeError, IndexError):
+            return False
+        if not valid_quote(bid, ask):
+            return False
 
-        if bid <= 0 or ask <= 0 or ask < bid:
-            return
-
-        info = self._instruments[symbol]
-        decimals = int(info["decimals"])
-        # Collapse provider bid/ask to mid so Infoway's own spread is not shown or
-        # double-counted. Platform spread is applied when publishing (see market-data main).
-        mid = (bid + ask) / 2.0
-        mid_r = round(mid, decimals)
-        bid_r = mid_r
-        ask_r = mid_r
-
-        ts_ms = data.get("t")
-        if isinstance(ts_ms, (int, float)) and ts_ms > 0:
-            sec = int(ts_ms // 1000)
-            ms = int(ts_ms % 1000)
-            dt = datetime.fromtimestamp(sec, tz=timezone.utc)
-            timestamp = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms:03d}Z"
-        else:
-            ts = datetime.now(timezone.utc)
-            timestamp = ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts.microsecond // 1000:03d}Z"
-
+        # Real best bid/ask from the book. Admin spread (if configured) is applied
+        # around the mid when publishing — see MarketDataService._process_ticks.
+        decimals = int(self._instruments[symbol]["decimals"])
         vol_b = b[1] if len(b) > 1 and b[1] else []
         vol_a = a[1] if len(a) > 1 and a[1] else []
         try:
@@ -189,26 +183,39 @@ class InfowayFeed:
         except (TypeError, ValueError, IndexError):
             volume = 0
 
-        tick = {
+        self._enqueue({
             "symbol": symbol,
-            "bid": bid_r,
-            "ask": ask_r,
-            "timestamp": timestamp,
+            "bid": round(float(bid), decimals),
+            "ask": round(float(ask), decimals),
+            "timestamp": ms_to_iso(data.get("t")),
             "volume": max(volume, 1),
-        }
-        self._enqueue(tick)
+        })
+        return True
 
     async def _heartbeat_loop(self, ws) -> None:
         while self._running:
-            await asyncio.sleep(45.0)
+            await asyncio.sleep(20.0)
             if not self._running:
                 break
             try:
-                msg = json.dumps({"code": 10010, "trace": _trace()})
-                await ws.send(msg)
+                await ws.send(json.dumps({"code": 10010, "trace": _trace()}))
             except Exception as exc:
-                logger.debug("Infoway heartbeat send failed: %s", exc)
+                logger.debug("Infoway heartbeat send failed: %s", self._redact(exc))
                 break
+
+    async def _watchdog(self, ws, business: str) -> None:
+        """Connection open but silent for 60s during market hours → force a reconnect."""
+        while self._running:
+            await asyncio.sleep(5.0)
+            silent = time.monotonic() - self._last_tick_mono.get(business, time.monotonic())
+            market_open = business == "crypto" or forex_market_open()
+            if silent >= WATCHDOG_SILENCE_SEC and market_open:
+                logger.error(
+                    "Infoway [%s] no depth tick for %.0fs while market open — reconnecting",
+                    business, silent,
+                )
+                await ws.close()
+                return
 
     async def _run_socket(self, business: str, codes: List[str]) -> None:
         if not codes:
@@ -216,32 +223,30 @@ class InfowayFeed:
         # One depth subscription per connection; comma-separated codes.
         codes_str = ",".join(sorted(set(codes)))
         url = self._ws_url(business)
+        delay = BACKOFF_START_SEC
 
         while self._running:
-            hb_task: Optional[asyncio.Task] = None
+            helpers: List[asyncio.Task] = []
+            got_ticks = False
             try:
-                logger.info("Infoway [%s] connecting…", business)
+                logger.info("Infoway [%s] connecting to %s", business, INFOWAY_WS_BASE)
                 async with websockets.connect(
                     url,
                     ping_interval=20,
                     ping_timeout=25,
                     close_timeout=10,
                 ) as ws:
-                    sub = json.dumps(
-                        {
-                            "code": 10003,
-                            "trace": _trace(),
-                            "data": {"codes": codes_str},
-                        }
-                    )
-                    await ws.send(sub)
+                    await ws.send(json.dumps(
+                        {"code": 10003, "trace": _trace(), "data": {"codes": codes_str}}
+                    ))
                     logger.info(
-                        "Infoway [%s] subscribed depth for %d codes",
-                        business,
-                        len(set(codes)),
+                        "Infoway [%s] subscribed depth for %d codes", business, len(set(codes))
                     )
-
-                    hb_task = asyncio.create_task(self._heartbeat_loop(ws))
+                    self._last_tick_mono[business] = time.monotonic()
+                    helpers = [
+                        asyncio.create_task(self._heartbeat_loop(ws)),
+                        asyncio.create_task(self._watchdog(ws, business)),
+                    ]
 
                     async for raw in ws:
                         if not self._running:
@@ -252,24 +257,33 @@ class InfowayFeed:
                             continue
                         code = msg.get("code")
                         if code == 10005:
-                            self._emit_depth(msg.get("data") or {})
+                            if self._emit_depth(msg.get("data") or {}):
+                                self._last_tick_mono[business] = time.monotonic()
+                                got_ticks = True
                         elif code in (10004, 10001):
                             logger.debug("Infoway [%s] ack: %s", business, msg.get("msg"))
-                        elif code and code >= 400:
-                            logger.warning(
+                        elif isinstance(code, int) and code >= 400:
+                            logger.error(
                                 "Infoway [%s] error (check API key / plan / symbol limits): %s",
-                                business,
-                                msg,
+                                business, self._redact(msg),
                             )
+                    logger.warning("Infoway [%s] connection closed", business)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.warning("Infoway [%s] WebSocket error: %s — reconnect in 5s", business, exc)
-                await asyncio.sleep(5)
+                logger.warning("Infoway [%s] WebSocket error: %s", business, self._redact(exc))
             finally:
-                if hb_task:
-                    hb_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await hb_task
+                for t in helpers:
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await t
+
+            if not self._running:
+                break
+            if got_ticks:
+                delay = BACKOFF_START_SEC
+            logger.info("Infoway [%s] reconnecting in %.0fs", business, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, BACKOFF_MAX_SEC)
 
         logger.info("Infoway [%s] task ended", business)

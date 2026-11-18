@@ -30,7 +30,8 @@ async def get_redis():
     return redis_client
 
 
-async def publish_price(symbol: str, bid: float, ask: float, timestamp: str):
+async def publish_price(symbol: str, bid: float, ask: float, timestamp: str, stale: bool = False):
+    """stale=True: feed is down, this is the last real price being held (not a live tick)."""
     import json
     data = json.dumps({
         "symbol": symbol,
@@ -38,6 +39,7 @@ async def publish_price(symbol: str, bid: float, ask: float, timestamp: str):
         "ask": ask,
         "timestamp": timestamp,
         "spread": round(ask - bid, 8),
+        "stale": stale,
     })
     await redis_client.set(PriceChannel.tick_key(symbol), data)
     await redis_client.publish(PriceChannel.price_channel(symbol), data)

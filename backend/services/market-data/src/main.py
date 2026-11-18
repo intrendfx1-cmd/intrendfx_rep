@@ -18,6 +18,7 @@ from packages.common.src.kafka_client import close_producer
 from .feed_handler import FeedSimulator, FrozenFeed, INSTRUMENTS
 from .infoway_config import usable_infoway_api_key
 from .infoway_feed import InfowayFeed
+from .hub_feed import FailoverFeed, HubFeed
 from .corecen_lp_feed import CorecenLPFeed
 from .bar_aggregator import BarAggregator
 from .seed_bars import seed as seed_bars
@@ -44,8 +45,10 @@ STALE_REFRESH_INTERVAL_SEC = 30.0
 class MarketDataService:
     def __init__(self):
         raw_key = (settings.INFOWAY_API_KEY or "").strip()
+        hub_key = (settings.INFOWAY_HUB_API_KEY or "").strip()
+        hub_url = (settings.INFOWAY_HUB_WS_URL or "").strip()
+        hub_ok = usable_infoway_api_key(hub_key) and hub_url.startswith("wss://")
         self._tick_count = 0
-        self._infoway_watchdog_armed = False
         if getattr(settings, "CORECEN_LP_ENABLED", False):
             if not settings.CORECEN_LP_API_KEY or not settings.CORECEN_LP_API_SECRET:
                 logger.error(
@@ -54,10 +57,18 @@ class MarketDataService:
                 )
             self.feed = CorecenLPFeed()
             logger.info("Price feed: Corecen LP (receiving pushes on /api/lp/prices/batch)")
+        elif usable_infoway_api_key(raw_key) and hub_ok:
+            self.feed = FailoverFeed(
+                InfowayFeed(raw_key, INSTRUMENTS),
+                HubFeed(hub_key, hub_url, INSTRUMENTS),
+            )
+            logger.info("Price feed: Infoway (primary) + Stream Hub (backup, per-symbol failover)")
         elif usable_infoway_api_key(raw_key):
             self.feed = InfowayFeed(raw_key, INSTRUMENTS)
-            self._infoway_watchdog_armed = True
-            logger.info("Price feed: Infoway WebSocket (depth)")
+            logger.info("Price feed: Infoway WebSocket (no backup configured)")
+        elif hub_ok:
+            self.feed = HubFeed(hub_key, hub_url, INSTRUMENTS)
+            logger.info("Price feed: Stream Hub only (no primary Infoway key)")
         elif getattr(settings, "ALLOW_SIMULATED_FEED", False):
             self.feed = FeedSimulator(tick_rate_multiplier=1.0)
             logger.warning(
@@ -78,7 +89,15 @@ class MarketDataService:
         self.spread_cache = StreamSpreadCache()
         self.running = True
         self._last_mid: dict[str, float] = {}
+        self._last_raw: dict[str, tuple[float, float]] = {}
         self._last_live_mono: dict[str, float] = {}
+
+    def _quote(self, symbol: str, mid: float) -> tuple[float, float]:
+        """Admin spread around mid when one is configured; otherwise the feed's real bid/ask."""
+        bid, ask = self.spread_cache.widen(symbol, mid)
+        if bid == ask and symbol in self._last_raw:
+            return self._last_raw[symbol]
+        return bid, ask
 
     async def start(self):
         logger.info("Starting Market Data Service...")
@@ -100,9 +119,6 @@ class MarketDataService:
             asyncio.create_task(self.aggregator.run_aggregation_loop()),
             asyncio.create_task(self._auto_seed_bars()),
         ]
-        if self._infoway_watchdog_armed:
-            tasks.append(asyncio.create_task(self._infoway_fallback_watchdog()))
-
         await asyncio.gather(*tasks)
 
     async def _spread_reload_loop(self):
@@ -155,6 +171,7 @@ class MarketDataService:
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                     continue
                 self._last_mid[sym] = (b + a) / 2.0
+                self._last_raw[sym] = (b, a)
                 self._last_live_mono[sym] = mono - STALE_TICK_AFTER_SEC - 1.0
                 n += 1
             if n:
@@ -175,8 +192,9 @@ class MarketDataService:
                 if now - self._last_live_mono.get(symbol, 0) < STALE_TICK_AFTER_SEC:
                     continue
                 try:
-                    bid, ask = self.spread_cache.widen(symbol, mid)
-                    await publish_price(symbol, bid, ask, ts)
+                    # Feed down for this symbol: hold the LAST REAL price, flagged stale.
+                    bid, ask = self._quote(symbol, mid)
+                    await publish_price(symbol, bid, ask, ts, stale=True)
                 except Exception as exc:
                     logger.debug("Stale quote refresh failed for %s: %s", symbol, exc)
 
@@ -197,8 +215,9 @@ class MarketDataService:
 
             mid = (bid + ask) / 2.0
             self._last_mid[symbol] = mid
+            self._last_raw[symbol] = (bid, ask)
             self._last_live_mono[symbol] = time.monotonic()
-            bid, ask = self.spread_cache.widen(symbol, mid)
+            bid, ask = self._quote(symbol, mid)
 
             await publish_price(symbol, bid, ask, ts)
 
@@ -206,43 +225,6 @@ class MarketDataService:
 
             self.aggregator.update(symbol, bid, ask, ts)
             self._tick_count += 1
-
-    async def _infoway_fallback_watchdog(self) -> None:
-        """Infoway delivered no ticks (bad/expired key, network, symbol mismatch).
-
-        By default we DO NOT switch to the simulator — fake ticks would diverge
-        from the real market and randomly swing users' open-position P&L. Infoway
-        keeps running (so it auto-resumes when the key/network recovers) and the
-        stale-quote refresher holds the last traded prices meanwhile. Only switch
-        to the simulator if ALLOW_SIMULATED_FEED is explicitly enabled (dev).
-        """
-        try:
-            await asyncio.sleep(55.0)
-        except asyncio.CancelledError:
-            raise
-        if not self.running or self._tick_count > 0:
-            return
-        if not isinstance(self.feed, InfowayFeed):
-            return
-
-        if not getattr(settings, "ALLOW_SIMULATED_FEED", False):
-            logger.error(
-                "Infoway: no ticks in 55s — check INFOWAY_API_KEY (expired?), outbound "
-                "HTTPS/WSS, and symbol codes. Holding LAST TRADED PRICES (frozen); NOT "
-                "switching to mock data. Quotes resume automatically when Infoway recovers."
-            )
-            return
-
-        logger.error(
-            "Infoway: no ticks in 55s — ALLOW_SIMULATED_FEED=true, falling back to "
-            "simulated feed so quotes appear (dev only)."
-        )
-        try:
-            await self.feed.stop()
-        except Exception as exc:
-            logger.warning("Stopping Infoway feed: %s", exc)
-        self.feed = FeedSimulator(tick_rate_multiplier=1.0)
-        asyncio.create_task(self.feed.start())
 
     async def _auto_seed_bars(self) -> None:
         """Wait for first ticks to arrive, then seed historical bars if Redis is empty."""

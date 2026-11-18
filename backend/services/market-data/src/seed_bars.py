@@ -11,16 +11,13 @@ Source of truth is InfoWay's REST klines — the SAME provider as the live
 WebSocket feed. History and live therefore share one price source, so the
 chart has NO basis seam and needs NO anchoring hack (the old Yahoo/TwelveData
 seed came from a different source and sat a few dollars off). Crypto falls
-back to Binance if InfoWay has no klines; anything with no real source at all
-falls back to a simulated walk so the chart is never blank.
+back to Binance if InfoWay has no klines. Symbols with no real source are
+SKIPPED — charts never show fake/simulated bars.
 """
 import asyncio
 import json
 import logging
-import math
-import random
 import sys
-import time
 
 import httpx
 
@@ -57,26 +54,6 @@ BINANCE_PAIRS: dict[str, str] = {
 BARS_COUNT = 500
 SPACING = 0.3  # seconds between REST calls — gentle on the InfoWay rate budget
 
-VOLATILITY = {
-    "forex": 0.0001,
-    "crypto": 0.003,
-    "indices": 0.001,
-    "commodities": 0.0015,
-    "stocks": 0.002,
-}
-
-
-def _guess_segment(symbol: str) -> str:
-    s = symbol.upper()
-    if s in BINANCE_PAIRS:
-        return "crypto"
-    if s in ("XAUUSD", "XAGUSD", "USOIL"):
-        return "commodities"
-    if s in ("US30", "US500", "NAS100", "UK100", "GER40"):
-        return "indices"
-    return "forex"
-
-
 async def _fetch_binance_klines(symbol: str, tf_name: str, count: int = 500) -> list[dict]:
     """Fetch real historical klines from Binance public REST API (crypto fallback)."""
     pair = BINANCE_PAIRS.get(symbol.upper())
@@ -110,77 +87,17 @@ async def _fetch_binance_klines(symbol: str, tf_name: str, count: int = 500) -> 
     return bars
 
 
-def _generate_bars(base_price: float, segment: str, tf_seconds: int, count: int) -> list[dict]:
-    """Last-resort simulated OHLCV walk anchored to current price (used only
-    when neither InfoWay nor Binance has data for a symbol)."""
-    vol = VOLATILITY.get(segment, 0.001)
-    bar_vol = vol * math.sqrt(tf_seconds / 60)
-
-    now = int(time.time())
-    bar_start = (now // tf_seconds) * tf_seconds
-
-    bars = []
-    price = base_price
-
-    for i in range(count, 0, -1):
-        t = bar_start - i * tf_seconds
-        change = random.gauss(0, bar_vol) * price
-        open_p = price
-        moves = [open_p]
-        for _ in range(4):
-            moves.append(moves[-1] + random.gauss(0, bar_vol * 0.5) * price)
-        close_p = moves[-1]
-        high_p = max(moves) + abs(random.gauss(0, bar_vol * 0.2) * price)
-        low_p = min(moves) - abs(random.gauss(0, bar_vol * 0.2) * price)
-
-        high_p = max(high_p, open_p, close_p)
-        low_p = min(low_p, open_p, close_p)
-
-        bars.append({
-            "time": t,
-            "open": round(open_p, 6),
-            "high": round(high_p, 6),
-            "low": round(low_p, 6),
-            "close": round(close_p, 6),
-            "volume": round(random.uniform(10, 1000), 2),
-        })
-        price = close_p + change * 0.3
-
-    return bars
-
-
-async def _current_mid(symbol: str) -> float:
-    """Live mid for a symbol from Redis (only needed for the simulated fallback)."""
-    raw = await redis_client.get(f"tick:{symbol}")
-    if raw:
-        try:
-            d = json.loads(raw)
-            mid = (float(d.get("bid", 0)) + float(d.get("ask", 0))) / 2
-            if mid > 0:
-                return mid
-        except Exception:
-            pass
-    raw = await redis_client.get(f"bar:current:{symbol}:1m")
-    if raw:
-        try:
-            d = json.loads(raw)
-            return (float(d.get("open", 0)) + float(d.get("close", 0))) / 2
-        except Exception:
-            pass
-    return 0.0
-
-
 async def seed(force: bool = False):
     """Backfill historical bars into Redis from InfoWay (same source as live).
 
     Preference per (symbol, tf): InfoWay REST → Binance (crypto only) →
-    simulated walk. No anchoring — InfoWay history already sits on the live
+    skip (never simulated). No anchoring — InfoWay history already sits on the live
     price level.
     """
     token = (getattr(get_settings(), "INFOWAY_API_KEY", "") or "").strip()
     if not token:
         logger.warning("INFOWAY_API_KEY not set — InfoWay history unavailable, "
-                       "crypto will use Binance and the rest will be simulated.")
+                       "crypto will use Binance and the rest will be skipped.")
 
     # Discover symbols from Redis (bar:current first, then tick:*).
     symbols: set[str] = set()
@@ -212,11 +129,10 @@ async def seed(force: bool = False):
     logger.info("Found %d symbols: %s", len(symbols), ", ".join(sorted(symbols)))
 
     for sym in sorted(symbols):
-        segment = _guess_segment(sym)
         is_crypto = sym in BINANCE_PAIRS
-        logger.info("Seeding %s (segment=%s)", sym, segment)
+        logger.info("Seeding %s", sym)
 
-        for tf_name, tf_seconds in TIMEFRAMES.items():
+        for tf_name in TIMEFRAMES:
             list_key = f"bars:{sym}:{tf_name}"
 
             if not force:
@@ -236,14 +152,10 @@ async def seed(force: bool = False):
                 src = "binance"
                 called_remote = called_remote or bool(bars)
 
-            # 3. Last resort → simulated walk anchored to the live price.
+            # 3. No real history → leave it empty (live bars build from real ticks).
             if not bars:
-                mid = await _current_mid(sym)
-                if mid <= 0:
-                    logger.info("  %s:%s no source and no live price — skipped", sym, tf_name)
-                    continue
-                bars = _generate_bars(mid, segment, tf_seconds, BARS_COUNT)
-                src = "simulated"
+                logger.warning("  %s:%s no real history available — skipped", sym, tf_name)
+                continue
 
             # Overwrite the list with the fresh bars (newest at index 0).
             pipe = redis_client.pipeline()
@@ -262,23 +174,6 @@ async def seed(force: bool = False):
     logger.info("Done seeding all symbols.")
 
 
-def _selftest() -> None:
-    # _generate_bars: OHLC invariants hold (high is the max, low is the min).
-    bars = _generate_bars(4500.0, "commodities", 300, 50)
-    assert len(bars) == 50
-    for b in bars:
-        assert b["high"] >= max(b["open"], b["close"])
-        assert b["low"] <= min(b["open"], b["close"])
-        assert b["high"] >= b["low"]
-    # times strictly increasing on the tf grid
-    times = [b["time"] for b in bars]
-    assert times == sorted(times) and len(set(times)) == len(times)
-    print("seed_bars self-check OK")
-
-
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        _selftest()
-    else:
-        # --force overwrites existing bars (needed to replace old seed data).
-        asyncio.run(seed(force="--force" in sys.argv))
+    # --force overwrites existing bars (needed to replace old seed data).
+    asyncio.run(seed(force="--force" in sys.argv))

@@ -60,8 +60,12 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
 
     # Market data provider (Infoway.io) — fallback when Corecen LP not configured
-    INFOWAY_API_KEY: str = ""
+    INFOWAY_API_KEY: str = ""  # official key — PRIMARY live feed + REST chart history
     INFOWAY_API_URL: str = "https://api.infoway.io"
+    # BACKUP live feed: Infoway Stream Hub. Used per symbol when the primary goes silent.
+    INFOWAY_HUB_API_KEY: str = ""
+    INFOWAY_HUB_API_SECRET: str = ""  # not used by the stream protocol; kept for the hub account
+    INFOWAY_HUB_WS_URL: str = ""
     # When the live feed (Infoway/Corecen) is unavailable — bad/expired key,
     # network loss — DO NOT generate simulated/mock prices by default. Mock ticks
     # diverge from the real market and randomly swing open-position P&L. Instead
