@@ -174,10 +174,10 @@ class ApiClient {
       const aborted = e instanceof Error && e.name === 'AbortError';
       throw new Error(
         aborted
-          ? 'Request timed out — start the API gateway (port 8000): docker compose up -d'
+          ? 'The server is taking too long to respond. Please check your connection and try again.'
           : e instanceof Error
             ? e.message === 'Failed to fetch'
-              ? 'Cannot reach API — start gateway on port 8000, then refresh.'
+              ? 'Connection lost. Please check your internet and refresh the page.'
               : e.message
             : 'Network error',
       );

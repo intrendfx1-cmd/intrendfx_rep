@@ -118,9 +118,8 @@ async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse
     console.error('[api/v1 proxy]', targetUrl, msg);
     return NextResponse.json(
       {
-        detail:
-          'Cannot reach API gateway. Run: docker compose up -d (or start gateway on port 8000). ' +
-          `Proxy target: ${gatewayOrigin()}`,
+        // Internal target stays in the server log above, never in the user-facing message.
+        detail: 'Service temporarily unavailable. Please try again in a moment.',
       },
       { status: 502 },
     );
