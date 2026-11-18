@@ -107,6 +107,7 @@ function RegisterContent() {
     if (!form.first_name.trim()) e.first_name = 'First name is required.';
     if (!form.last_name.trim()) e.last_name = 'Last name is required.';
     if (!form.email.includes('@') || !form.email.includes('.')) e.email = 'Please enter a valid email address.';
+    if (!/^\+?\d{7,15}$/.test(form.phone.replace(/[\s\-()]/g, ''))) e.phone = 'Please enter a valid phone number.';
     if (form.password.length < 8) e.password = 'Password must be at least 8 characters.';
     if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match.';
     setErrors(e);
@@ -139,7 +140,7 @@ function RegisterContent() {
         password: form.password,
         first_name: form.first_name,
         last_name: form.last_name,
-        phone: form.phone || undefined,
+        phone: form.phone.trim(),
         referral_code: form.referral_code || undefined,
         otp: otp.trim(),
       });
@@ -297,11 +298,12 @@ function RegisterContent() {
 
                   <motion.div {...fadeUp(0.5)}>
                     <AuthInput
-                      label="Phone (optional)"
+                      label="Phone"
                       type="tel"
                       placeholder="+91 9876543210"
                       value={form.phone}
                       onChange={(e) => update('phone', e.target.value)}
+                      error={errors.phone}
                     />
                   </motion.div>
 

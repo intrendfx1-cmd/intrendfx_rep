@@ -1,4 +1,5 @@
 """Pydantic schemas for API request/response validation."""
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -20,7 +21,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    phone: Optional[str] = None
+    phone: str
     country: Optional[str] = None
     referral_code: Optional[str] = None
     # 6-digit email verification code from /auth/register/send-otp.
@@ -30,6 +31,15 @@ class RegisterRequest(BaseModel):
     @classmethod
     def _norm_email(cls, v):
         return _normalize_email(v) if isinstance(v, str) else v
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _norm_phone(cls, v):
+        """Required. Strip spaces/dashes/brackets; allow optional + and 7-15 digits (E.164)."""
+        phone = re.sub(r"[\s\-()]", "", v) if isinstance(v, str) else ""
+        if not re.fullmatch(r"\+?\d{7,15}", phone):
+            raise ValueError("Please enter a valid phone number")
+        return phone
 
 
 class SendRegisterOtpRequest(BaseModel):
