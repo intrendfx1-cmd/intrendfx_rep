@@ -15,7 +15,7 @@ import json
 import logging
 import time
 import urllib.parse
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import websockets
 
@@ -179,18 +179,22 @@ class HubFeed:
 
 
 class FailoverFeed:
-    """Primary (official Infoway) first; per symbol, backup (hub) ticks are used
-    only while the primary has been silent for that symbol ≥ FAILOVER_SEC.
-    Both sources are real prices — when the primary resumes it takes over again."""
+    """Primary (official Infoway) first. Backup (hub) ticks pass for a symbol when
+    its primary socket group (common / crypto) has been fully silent ≥ FAILOVER_SEC,
+    or that one symbol has been silent ≥ SYMBOL_FAILOVER_SEC while the group still
+    ticks. A quiet pair's normal few-second gaps therefore never flip sources (the
+    hub's spread is wider). When the primary resumes it takes over again."""
 
     FAILOVER_SEC = 5.0
+    SYMBOL_FAILOVER_SEC = 60.0
 
-    def __init__(self, primary, backup):
+    def __init__(self, primary, backup, group_of: Callable[[str], str]):
         self.primary = primary
         self.backup = backup
+        self._group_of = group_of
         self._primary_seen: Dict[str, float] = {}
-        self._primary_any = 0.0
-        self._on_backup = False
+        self._group_seen: Dict[str, float] = {}
+        self._on_backup: set[str] = set()
 
     async def start(self) -> None:
         await asyncio.gather(self.primary.start(), self.backup.start(), return_exceptions=True)
@@ -198,25 +202,32 @@ class FailoverFeed:
     async def stop(self) -> None:
         await asyncio.gather(self.primary.stop(), self.backup.stop(), return_exceptions=True)
 
+    def _primary_down(self, symbol: str, now: float) -> bool:
+        group_silent = now - self._group_seen.get(self._group_of(symbol), 0.0)
+        symbol_silent = now - self._primary_seen.get(symbol, 0.0)
+        return group_silent >= self.FAILOVER_SEC or symbol_silent >= self.SYMBOL_FAILOVER_SEC
+
     async def get_tick(self) -> Optional[dict]:
         tick = await self.primary.get_tick()
         if tick:
             now = time.monotonic()
+            group = self._group_of(tick["symbol"])
             self._primary_seen[tick["symbol"]] = now
-            self._primary_any = now
-            if self._on_backup:
-                self._on_backup = False
-                logger.info("Failover: primary (Infoway) ticking again — primary active")
+            self._group_seen[group] = now
+            if group in self._on_backup:
+                self._on_backup.discard(group)
+                logger.info("Failover: primary Infoway [%s] ticking again — primary active", group)
             return tick
         while True:
             tick = await self.backup.get_tick()
             if tick is None:
                 return None
             now = time.monotonic()
-            if now - self._primary_seen.get(tick["symbol"], 0.0) >= self.FAILOVER_SEC:
-                if not self._on_backup and now - self._primary_any >= self.FAILOVER_SEC:
-                    self._on_backup = True
-                    logger.warning("Failover: primary (Infoway) silent — serving backup (hub) prices")
+            if self._primary_down(tick["symbol"], now):
+                group = self._group_of(tick["symbol"])
+                if group not in self._on_backup and now - self._group_seen.get(group, 0.0) >= self.FAILOVER_SEC:
+                    self._on_backup.add(group)
+                    logger.warning("Failover: primary Infoway [%s] silent — serving backup (hub) prices", group)
                 tick["source"] = "backup"
                 return tick
-            # primary is fresh for this symbol → drop the backup tick
+            # primary is healthy for this symbol → drop the backup tick

@@ -61,6 +61,8 @@ class MarketDataService:
             self.feed = FailoverFeed(
                 InfowayFeed(raw_key, INSTRUMENTS),
                 HubFeed(hub_key, hub_url, INSTRUMENTS),
+                # same split as Infoway's sockets: crypto vs everything else
+                group_of=lambda s: "crypto" if INSTRUMENTS.get(s, {}).get("category") == "crypto" else "common",
             )
             logger.info("Price feed: Infoway (primary) + Stream Hub (backup, per-symbol failover)")
         elif usable_infoway_api_key(raw_key):

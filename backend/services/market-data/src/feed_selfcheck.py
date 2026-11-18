@@ -21,14 +21,27 @@ def _utc(*a):
 
 async def _check_failover():
     t = lambda s: {"symbol": s, "bid": 1.0, "ask": 1.1}  # noqa: E731
-    f = FailoverFeed(_Q([t("EURUSD")]), _Q([t("EURUSD"), t("XAUUSD")]))
+    group = lambda s: "crypto" if s == "BTCUSD" else "common"  # noqa: E731
+    f = FailoverFeed(_Q([t("EURUSD"), t("XAUUSD")]), _Q([t("EURUSD"), t("XAUUSD"), t("BTCUSD")]), group)
     assert (await f.get_tick())["symbol"] == "EURUSD"  # primary first
-    tick = await f.get_tick()  # backup EURUSD dropped (primary fresh), XAUUSD passes
-    assert tick["symbol"] == "XAUUSD" and tick["source"] == "backup"
+    assert (await f.get_tick())["symbol"] == "XAUUSD"
+    # common group just ticked → backup EURUSD + XAUUSD dropped; crypto group never ticked → BTCUSD passes
+    tick = await f.get_tick()
+    assert tick["symbol"] == "BTCUSD" and tick["source"] == "backup", tick
     assert await f.get_tick() is None
-    f._primary_seen["EURUSD"] -= FailoverFeed.FAILOVER_SEC  # primary went silent
+    # one quiet pair inside a ticking group: no flip before 60s …
+    f._primary_seen["EURUSD"] -= 30
+    f.backup.ticks.append(t("EURUSD"))
+    assert await f.get_tick() is None
+    # … but after 60s silent the backup serves it
+    f._primary_seen["EURUSD"] -= 31
     f.backup.ticks.append(t("EURUSD"))
     assert (await f.get_tick())["source"] == "backup"
+    # whole common socket silent ≥5s → backup immediately for any common symbol
+    f._group_seen["common"] -= FailoverFeed.FAILOVER_SEC
+    f.backup.ticks.append(t("XAUUSD"))
+    assert (await f.get_tick())["symbol"] == "XAUUSD"
+    assert "common" in f._on_backup
 
 
 def main():
