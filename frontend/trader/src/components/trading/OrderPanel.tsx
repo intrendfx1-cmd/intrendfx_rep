@@ -423,7 +423,7 @@ export default function OrderPanel() {
 
       {/* ═══ Order form ═══ */}
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
-        <div className="px-2.5 pt-3 pb-3 space-y-3">
+        <div className="px-2.5 pt-2.5 pb-2 space-y-2">
           {/* Sell / Buy price cards + spread badge */}
           <div className="relative grid grid-cols-2 gap-1.5">
             <SidePriceCard side="sell" active={side === 'sell'} price={tick?.bid} digits={digits} onClick={() => setSide('sell')} />
@@ -439,7 +439,7 @@ export default function OrderPanel() {
           </div>
 
           {/* Market / Pending */}
-          <div className="!mt-5 flex p-0.5 rounded-lg bg-bg-secondary border border-border-primary">
+          <div className="!mt-4 flex p-0.5 rounded-lg bg-bg-secondary border border-border-primary">
             {(['market', 'pending'] as const).map((t) => (
               <button
                 key={t}
@@ -447,7 +447,7 @@ export default function OrderPanel() {
                 onClick={() => setOrderTab(t)}
                 aria-pressed={orderTab === t}
                 className={clsx(
-                  'flex-1 py-1.5 rounded-md text-xs font-semibold capitalize transition-colors',
+                  'flex-1 py-1 rounded-md text-xs font-semibold capitalize transition-colors',
                   orderTab === t
                     ? 'bg-bg-hover text-text-primary shadow-sm'
                     : 'text-text-tertiary hover:text-text-secondary',
@@ -491,18 +491,16 @@ export default function OrderPanel() {
                 placeholder={execPrice > 0 ? execPrice.toFixed(digits) : '0.00'}
                 invalid={openPriceNum > 0 && !derivedPendingType}
               />
-              <div className="mt-1 min-h-[14px] text-[10px] leading-tight">
-                {openPriceNum > 0 && !derivedPendingType && tick ? (
-                  <span className="text-[#ef5350]">
-                    {side === 'buy' ? 'Move below ask for Limit, above for Stop' : 'Move above bid for Limit, below for Stop'}
-                  </span>
-                ) : pendingPipsDiff !== null && Number.isFinite(pendingPipsDiff) ? (
-                  <span className="font-mono text-text-tertiary">
-                    {pendingPipsDiff > 0 ? '+' : ''}
-                    {pendingPipsDiff.toFixed(1)} pips from market
-                  </span>
-                ) : null}
-              </div>
+              {openPriceNum > 0 && !derivedPendingType && tick ? (
+                <div className="mt-0.5 text-[10px] leading-tight text-[#ef5350]">
+                  {side === 'buy' ? 'Move below ask for Limit, above for Stop' : 'Move above bid for Limit, below for Stop'}
+                </div>
+              ) : pendingPipsDiff !== null && Number.isFinite(pendingPipsDiff) ? (
+                <div className="mt-0.5 text-[10px] leading-tight font-mono text-text-tertiary">
+                  {pendingPipsDiff > 0 ? '+' : ''}
+                  {pendingPipsDiff.toFixed(1)} pips from market
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -530,49 +528,51 @@ export default function OrderPanel() {
       </div>
 
       {/* ═══ Summary + confirm ═══ */}
-      <div className="shrink-0 border-t border-border-primary bg-bg-secondary px-2.5 pt-2 pb-2.5 space-y-2">
-        <div className="space-y-1 text-[11px]">
-          <InfoRow label="Leverage">
+      <div className="shrink-0 border-t border-border-primary bg-bg-secondary px-2.5 pt-1.5 pb-2 space-y-1.5">
+        <div className="grid grid-cols-3 gap-1 text-[10px] leading-tight">
+          <InfoCell label="Leverage">
             {activeAccount ? (
               <LeveragePicker account={activeAccount} onChanged={() => { void refreshAccount(); }} />
             ) : '—'}
-          </InfoRow>
-          <InfoRow label="Margin" valueClass={!hasEnoughMargin ? 'text-[#ef5350]' : undefined}>
+          </InfoCell>
+          <InfoCell label="Margin" valueClass={!hasEnoughMargin ? 'text-[#ef5350]' : undefined}>
             {formatMoney(marginRequired, ccy)}
-          </InfoRow>
-          <InfoRow label="Free margin" valueClass={!hasEnoughMargin ? 'text-[#ef5350]' : undefined}>
-            <span className="inline-flex items-center gap-1.5">
+          </InfoCell>
+          <InfoCell label="Free margin" valueClass={!hasEnoughMargin ? 'text-[#ef5350]' : undefined} align="right">
+            <span className="inline-flex items-center gap-1">
               {formatMoney(freeMargin, ccy)}
               <span
-                className={clsx('text-[9px]', isConnected ? 'text-[#2196f3]' : 'text-[#f57c00]')}
+                className={clsx('text-[8px]', isConnected ? 'text-[#2196f3]' : 'text-[#f57c00]')}
                 title={isConnected ? 'Price feed connected' : 'Price feed disconnected'}
               >
                 {isConnected ? '●' : '○'}
               </span>
             </span>
-          </InfoRow>
+          </InfoCell>
         </div>
         {!hasEnoughMargin && (
           <div className="text-[10px] text-[#ef5350] font-semibold text-center leading-tight">Insufficient margin</div>
         )}
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={submitDisabled}
-          className="w-full py-2.5 rounded-lg text-sm font-bold transition-transform duration-75 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
-          style={{ background: sideColor, color: '#fff', boxShadow: `0 2px 12px ${sideColor}33` }}
-        >
-          {orderTab === 'pending' && derivedPendingType
-            ? `Place ${sideWord} ${derivedPendingType === 'limit' ? 'Limit' : 'Stop'} · ${lotsNum.toFixed(2)} lots`
-            : `Confirm ${sideWord} · ${lotsNum.toFixed(2)} lots`}
-        </button>
-        <button
-          type="button"
-          onClick={resetForm}
-          className="w-full py-2 rounded-lg text-xs font-semibold text-text-secondary bg-bg-base border border-border-primary hover:text-text-primary hover:bg-bg-hover transition-colors"
-        >
-          Cancel
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitDisabled}
+            className="flex-1 min-w-0 py-2.5 rounded-lg text-[13px] font-bold truncate transition-transform duration-75 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
+            style={{ background: sideColor, color: '#fff', boxShadow: `0 2px 12px ${sideColor}33` }}
+          >
+            {orderTab === 'pending' && derivedPendingType
+              ? `Place ${sideWord} ${derivedPendingType === 'limit' ? 'Limit' : 'Stop'} · ${lotsNum.toFixed(2)}`
+              : `Confirm ${sideWord} · ${lotsNum.toFixed(2)} lots`}
+          </button>
+          <button
+            type="button"
+            onClick={resetForm}
+            className="shrink-0 px-3 rounded-lg text-xs font-semibold text-text-secondary bg-bg-base border border-border-primary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
         {!marketStatus.isOpen && orderTab === 'market' && (
           <div
             className="rounded px-2 py-1 text-[10px] text-red-400 leading-snug text-center"
@@ -607,7 +607,7 @@ function SidePriceCard({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="min-w-0 rounded-lg px-2.5 pt-2 pb-3.5 text-left transition-colors active:scale-[0.98]"
+      className="min-w-0 rounded-lg px-2.5 pt-1.5 pb-3 text-left transition-colors active:scale-[0.98]"
       style={
         active
           ? { background: color, border: `1px solid ${color}`, color: '#fff' }
@@ -615,7 +615,7 @@ function SidePriceCard({
       }
     >
       <div className="text-[11px] font-semibold leading-none">{side === 'buy' ? 'Buy' : 'Sell'}</div>
-      <div className="mt-1.5 font-mono leading-none whitespace-nowrap overflow-hidden">
+      <div className="mt-1 font-mono leading-none whitespace-nowrap overflow-hidden">
         <span className="text-[13px]">{main}</span>
         <span className="text-[20px] font-bold">{big}</span>
         {sup && <sup className="ml-px text-[11px]">{sup}</sup>}
@@ -649,7 +649,7 @@ function StepperField({
   return (
     <div
       className={clsx(
-        'flex items-stretch h-9 rounded-md border bg-bg-secondary transition-colors',
+        'flex items-stretch h-8 rounded-md border bg-bg-secondary transition-colors',
         invalid ? 'border-[#ef5350]/70' : 'border-border-primary focus-within:border-[#2196f3]/70',
       )}
     >
@@ -745,21 +745,19 @@ function SlTpField({
         invalid={Boolean(error)}
         suffix={<ModeSelect mode={state.mode} unit={unit} onPick={switchMode} />}
       />
-      <div className="mt-1 min-h-[14px] text-[10px] leading-tight">
-        {error ? (
-          <span className="text-[#ef5350]">{error}</span>
-        ) : outcome && price != null ? (
-          <span className="font-mono text-text-tertiary">
-            {state.mode !== 'price' && <>Price {price.toFixed(ctx.digits)} · </>}
-            {outcome.pips >= 0 ? '+' : ''}
-            {outcome.pips.toFixed(1)} pips ·{' '}
-            <span style={{ color: outcome.money >= 0 ? BUY : SELL }}>
-              {outcome.money >= 0 ? '+' : '−'}
-              {Math.abs(outcome.money).toFixed(2)} {ccy}
-            </span>
+      {error ? (
+        <div className="mt-0.5 text-[10px] leading-tight text-[#ef5350]">{error}</div>
+      ) : outcome && price != null ? (
+        <div className="mt-0.5 text-[10px] leading-tight font-mono text-text-tertiary truncate">
+          {state.mode !== 'price' && <>Price {price.toFixed(ctx.digits)} · </>}
+          {outcome.pips >= 0 ? '+' : ''}
+          {outcome.pips.toFixed(1)} pips ·{' '}
+          <span style={{ color: outcome.money >= 0 ? BUY : SELL }}>
+            {outcome.money >= 0 ? '+' : '−'}
+            {Math.abs(outcome.money).toFixed(2)} {ccy}
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -820,11 +818,21 @@ function ModeSelect({ mode, unit, onPick }: { mode: SlTpMode; unit: string; onPi
   );
 }
 
-function InfoRow({ label, children, valueClass }: { label: string; children: ReactNode; valueClass?: string }) {
+function InfoCell({
+  label,
+  children,
+  valueClass,
+  align = 'left',
+}: {
+  label: string;
+  children: ReactNode;
+  valueClass?: string;
+  align?: 'left' | 'right';
+}) {
   return (
-    <div className="flex items-center justify-between gap-2">
+    <div className={clsx('min-w-0 flex flex-col', align === 'right' ? 'items-end text-right' : 'items-start')}>
       <span className="text-text-tertiary">{label}</span>
-      <span className={clsx('font-mono font-semibold text-text-primary', valueClass)}>{children}</span>
+      <span className={clsx('font-mono font-semibold text-text-primary truncate max-w-full', valueClass)}>{children}</span>
     </div>
   );
 }
@@ -880,12 +888,12 @@ function LeveragePicker({
   };
 
   return (
-    <div className="ml-auto relative" ref={ref}>
+    <div className="relative" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((p) => !p)}
         disabled={saving}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-semibold text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-50"
+        className="inline-flex items-center gap-0.5 rounded text-[10px] font-mono font-semibold text-text-primary hover:text-[#2196f3] transition-colors disabled:opacity-50"
         title={`Max 1:${maxLev} — click to change`}
       >
         1:{account.leverage}
@@ -893,7 +901,7 @@ function LeveragePicker({
       </button>
       {open && (
         <div
-          className="absolute right-0 bottom-full mb-1 w-28 rounded-lg border border-border-primary shadow-xl py-1"
+          className="absolute left-0 bottom-full mb-1 w-28 rounded-lg border border-border-primary shadow-xl py-1"
           style={{
             backgroundColor: 'var(--bg-card)',
             zIndex: 1000,
