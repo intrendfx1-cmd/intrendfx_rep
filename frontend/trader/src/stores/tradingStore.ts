@@ -173,7 +173,7 @@ const DEFAULT_WATCHLIST = [
 //   • quote === USD                 → 1            (EURUSD, XAUUSD, BTCUSD…)
 //   • base  === USD (USDJPY, USDCAD)→ 1 / price    (P&L is in the quote ccy)
 //   • cross (EURJPY, GBPJPY, EURGBP)→ via USDxxx or xxxUSD live price
-function quoteToUsdFactor(
+export function quoteToUsdFactor(
   base: string,
   quote: string,
   currentPrice: number,
@@ -197,7 +197,7 @@ function quoteToUsdFactor(
 // Factor that converts a USD amount into the ACTIVE account's currency.
 // Gated on the account currency (not just "rate > 1") so a stale INR rate can
 // never blow up P&L on a USD account, and vice-versa.
-function accountCurrencyFactor(
+export function accountCurrencyFactor(
   accountCurrency: string | undefined,
   usdInrRate: number,
 ): number {
