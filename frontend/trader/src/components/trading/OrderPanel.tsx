@@ -423,7 +423,7 @@ export default function OrderPanel() {
 
       {/* ═══ Order form ═══ */}
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
-        <div className="px-2.5 pt-2.5 pb-2 space-y-2">
+        <div className="px-2.5 pt-2 pb-2 space-y-1.5">
           {/* Sell / Buy price cards + spread badge */}
           <div className="relative grid grid-cols-2 gap-1.5">
             <SidePriceCard side="sell" active={side === 'sell'} price={tick?.bid} digits={digits} onClick={() => setSide('sell')} />
@@ -439,7 +439,7 @@ export default function OrderPanel() {
           </div>
 
           {/* Market / Pending */}
-          <div className="!mt-4 flex p-0.5 rounded-lg bg-bg-secondary border border-border-primary">
+          <div className="!mt-3.5 flex p-0.5 rounded-lg bg-bg-secondary border border-border-primary">
             {(['market', 'pending'] as const).map((t) => (
               <button
                 key={t}
@@ -461,7 +461,7 @@ export default function OrderPanel() {
           {/* Open price — pending only */}
           {orderTab === 'pending' && (
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between mb-0.5">
                 <span className="text-[11px] font-semibold text-text-secondary">Open price</span>
                 <span
                   className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
@@ -506,7 +506,7 @@ export default function OrderPanel() {
 
           {/* Volume */}
           <div>
-            <div className="mb-1 text-[11px] font-semibold text-text-secondary">Volume</div>
+            <div className="mb-0.5 text-[11px] font-semibold text-text-secondary">Volume</div>
             <StepperField
               value={lots}
               ariaLabel="Volume in lots"
@@ -721,7 +721,7 @@ function SlTpField({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-0.5">
         <span className="text-[11px] font-semibold text-text-secondary">{label}</span>
         {isSet && (
           <button
